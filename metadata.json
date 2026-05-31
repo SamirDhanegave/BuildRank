@@ -1,0 +1,6 @@
+{
+  "name": "BuildRank",
+  "description": "A web platform where developers showcase real projects, interact through likes and comments, and build a reputation based on their contributions and community engagement.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

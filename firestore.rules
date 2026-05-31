@@ -1,0 +1,196 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net catches all unspecified collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Common Security Primitives ---
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isEmailVerified() {
+      return request.auth != null && request.auth.token.email_verified == true;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-\\+@\\.: ]+$');
+    }
+
+    // --- User Profile Entity Rules ---
+
+    function isValidProfile(data) {
+      return data.keys().hasAll(['username', 'points', 'email'])
+        && data.username is string && data.username.size() >= 2 && data.username.size() <= 30
+        && data.email is string && data.email.size() <= 100
+        && data.points is int
+        && (!data.keys().hasAny(['bio']) || (data.bio is string && data.bio.size() <= 300))
+        && (!data.keys().hasAny(['skills']) || (data.skills is list && data.skills.size() <= 20))
+        && (!data.keys().hasAny(['photoURL']) || (data.photoURL is string && data.photoURL.size() <= 500))
+        && (!data.keys().hasAny(['createdAt']) || data.createdAt is timestamp);
+    }
+
+    match /profiles/{userId} {
+      allow get, list: if true;
+      
+      allow create: if isSignedIn() 
+        && userId == request.auth.uid 
+        && isValidProfile(incoming())
+        && incoming().points == 0
+        && incoming().email == request.auth.token.email;
+
+      allow update: if isSignedIn()
+        && (
+          // Action 1: User modifies their own metadata (strictly forbidding modifying points directly)
+          (userId == request.auth.uid 
+           && isValidProfile(incoming())
+           && incoming().email == existing().email
+           && (!incoming().keys().hasAny(['createdAt']) || incoming().createdAt == existing().createdAt)
+           && incoming().diff(existing()).affectedKeys().hasOnly(['username', 'bio', 'skills', 'photoURL']))
+          ||
+          // Action 2: Atomic Reputation Points increment / decrement (+10, +2, +5, -2, -5, -10) by other users or transactions
+          (isValidProfile(incoming())
+           && incoming().username == existing().username
+           && incoming().email == existing().email
+           && incoming().diff(existing()).affectedKeys().hasOnly(['points'])
+           && (
+               // +10 point creation reward: only allowed if creating/retracting their own post
+               (incoming().points - existing().points == 10 && userId == request.auth.uid)
+               ||
+               // -10 point retraction deduction: allowed for post owner
+               (incoming().points - existing().points == -10 && userId == request.auth.uid)
+               ||
+               // +2 points for liking: only allowed if they are NOT the profile owner
+               (incoming().points - existing().points == 2 && userId != request.auth.uid)
+               ||
+               // -2 points for unliking: only allowed if they are NOT the profile owner
+               (incoming().points - existing().points == -2 && userId != request.auth.uid)
+               ||
+               // +5 points for commenting: only allowed if they are NOT the profile owner
+               (incoming().points - existing().points == 5 && userId != request.auth.uid)
+               ||
+               // -5 points for comment deletion: allowed
+               (incoming().points - existing().points == -5)
+           ))
+        );
+    }
+
+    // --- Post Entity Rules ---
+
+    function isValidPost(data) {
+      return data.keys().hasAll(['userId', 'username', 'title', 'description', 'likesCount', 'commentsCount', 'createdAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.username is string && data.username.size() <= 50
+        && data.title is string && data.title.size() >= 3 && data.title.size() <= 100
+        && data.description is string && data.description.size() >= 10 && data.description.size() <= 2000
+        && data.likesCount is int && data.likesCount >= 0
+        && data.commentsCount is int && data.commentsCount >= 0
+        && data.createdAt is timestamp
+        && (!data.keys().hasAny(['tags']) || (data.tags is list && data.tags.size() <= 10))
+        && (!data.keys().hasAny(['link']) || (data.link is string && data.link.size() <= 500))
+        && (!data.keys().hasAny(['imageURL']) || (data.imageURL is string && data.imageURL.size() <= 1000));
+    }
+
+    match /posts/{postId} {
+      allow get, list: if true;
+
+      allow create: if isEmailVerified()
+        && isValidId(postId)
+        && isValidPost(incoming())
+        && incoming().userId == request.auth.uid
+        && incoming().likesCount == 0
+        && incoming().commentsCount == 0
+        && incoming().createdAt == request.time;
+
+      allow update: if isEmailVerified()
+        && isValidPost(incoming())
+        && (
+          // Action 1: Owner editing content
+          (existing().userId == request.auth.uid
+           && incoming().userId == existing().userId
+           && incoming().createdAt == existing().createdAt
+           && incoming().diff(existing()).affectedKeys().hasOnly(['title', 'description', 'tags', 'link', 'imageURL']))
+          ||
+          // Action 2: Incremental Liking/Commenting update
+          (incoming().userId == existing().userId
+           && incoming().title == existing().title
+           && incoming().description == existing().description
+           && incoming().createdAt == existing().createdAt
+           && (
+             // Increment/decrement likesCount by 1
+             (incoming().diff(existing()).affectedKeys().hasOnly(['likesCount'])
+              && (incoming().likesCount - existing().likesCount == 1 || incoming().likesCount - existing().likesCount == -1))
+             ||
+             // Increment/decrement commentsCount by 1
+             (incoming().diff(existing()).affectedKeys().hasOnly(['commentsCount'])
+              && (incoming().commentsCount - existing().commentsCount == 1 || incoming().commentsCount - existing().commentsCount == -1))
+           ))
+        );
+
+      allow delete: if isEmailVerified()
+        && existing().userId == request.auth.uid;
+    }
+
+    // --- Like Entity Rules ---
+
+    function isValidLike(data) {
+      return data.keys().hasAll(['userId', 'postId', 'createdAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.postId is string && data.postId.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    match /likes/{likeId} {
+      allow get: if true;
+      allow list: if isSignedIn() && resource.data.userId == request.auth.uid;
+
+      allow create: if isEmailVerified()
+        && isValidId(likeId)
+        && likeId == request.auth.uid + "_" + incoming().postId
+        && isValidLike(incoming())
+        && incoming().userId == request.auth.uid
+        && exists(/databases/$(database)/documents/posts/$(incoming().postId))
+        && incoming().createdAt == request.time;
+
+      allow delete: if isEmailVerified()
+        && existing().userId == request.auth.uid;
+    }
+
+    // --- Comment Entity Rules ---
+
+    function isValidComment(data) {
+      return data.keys().hasAll(['userId', 'postId', 'username', 'content', 'createdAt'])
+        && data.userId is string && data.userId.size() <= 128
+        && data.postId is string && data.postId.size() <= 128
+        && data.username is string && data.username.size() <= 50
+        && data.content is string && data.content.size() >= 1 && data.content.size() <= 1000
+        && data.createdAt is timestamp
+        && (!data.keys().hasAny(['userPhotoURL']) || (data.userPhotoURL is string && data.userPhotoURL.size() <= 500));
+    }
+
+    match /comments/{commentId} {
+      allow get, list: if true;
+
+      allow create: if isEmailVerified()
+        && isValidId(commentId)
+        && isValidComment(incoming())
+        && incoming().userId == request.auth.uid
+        && exists(/databases/$(database)/documents/posts/$(incoming().postId))
+        && incoming().createdAt == request.time;
+
+      allow delete: if isEmailVerified()
+        && (existing().userId == request.auth.uid || get(/databases/$(database)/documents/posts/$(existing().postId)).data.userId == request.auth.uid);
+    }
+  }
+}

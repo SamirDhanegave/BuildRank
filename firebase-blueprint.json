@@ -1,0 +1,81 @@
+{
+  "entities": {
+    "profile": {
+      "title": "User Profile",
+      "description": "Represents a user's public profile and point dashboard.",
+      "type": "object",
+      "properties": {
+        "username": { "type": "string" },
+        "bio": { "type": "string" },
+        "skills": { "type": "array" },
+        "points": { "type": "integer" },
+        "photoURL": { "type": "string" },
+        "email": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["username", "points", "email"]
+    },
+    "post": {
+      "title": "Project Post",
+      "description": "A showcase project posted by a user.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "username": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "tags": { "type": "array" },
+        "link": { "type": "string" },
+        "imageURL": { "type": "string" },
+        "likesCount": { "type": "integer" },
+        "commentsCount": { "type": "integer" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "username", "title", "description", "likesCount", "commentsCount", "createdAt"]
+    },
+    "like": {
+      "title": "Post Like",
+      "description": "A representation of a post like to track duplicates, keyed by userId_postId.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "postId": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "postId", "createdAt"]
+    },
+    "comment": {
+      "title": "Post Comment",
+      "description": "A comment left by a user on a post.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "postId": { "type": "string" },
+        "username": { "type": "string" },
+        "userPhotoURL": { "type": "string" },
+        "content": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["userId", "postId", "username", "content", "createdAt"]
+    }
+  },
+  "firestore": {
+    "profiles/{userId}": {
+      "schema": "profile",
+      "description": "Collection of user profiles keyed by user UID."
+    },
+    "posts/{postId}": {
+      "schema": "post",
+      "description": "Global list of project showcase posts."
+    },
+    "likes/{likeId}": {
+      "schema": "like",
+      "description": "Interaction tracking to prevent double likes, keyed by userId_postId."
+    },
+    "comments/{commentId}": {
+      "schema": "comment",
+      "description": "Comments left on posts."
+    }
+  }
+}
